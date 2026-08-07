@@ -123,6 +123,47 @@ def protected_profile(authorization: str | None = Header(default=None)):
 
     return {"message": "Access granted", "token": token}
 
+# --- Stage 3: GET /protected/profile ---
+@app.get("/protected/profile", status_code=status.HTTP_200_OK)
+def protected_profile(authorization: str | None = Header(default=None)):
+    # 1. Check if header is present and properly formatted
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access token required"
+        )
+    
+    token = authorization.split(" ")[1]
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access token required"
+        )
+
+    # 2. Verify token using Supabase SDK
+    try:
+        user_response = supabase.auth.get_user(token)
+        user = user_response.user
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token"
+            )
+
+        # 3. Return secure user metadata
+        return {
+            "id": user.id,
+            "email": user.email,
+            "created_at": user.created_at
+        }
+
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token"
+        )
+
 
 if __name__ == "__main__":
     if supabase:
