@@ -3,10 +3,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import uvicorn
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Header, status
 from pydantic import BaseModel, EmailStr
 
-# تحميل ملف .env
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
@@ -21,6 +20,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI()
 
+
 class UserAuthSchema(BaseModel):
     email: EmailStr
     password: str
@@ -31,6 +31,7 @@ def read_root():
     return {"status": "Server running"}
 
 
+# --- Stage 1 Routes ---
 @app.post("/auth/signup", status_code=status.HTTP_201_CREATED)
 def signup(credentials: UserAuthSchema):
     if not credentials.email or not credentials.password:
@@ -94,6 +95,33 @@ def login(credentials: UserAuthSchema):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid login credentials"
         )
+
+
+# --- Stage 2 Routes ---
+
+# 1. GET /public/info
+@app.get("/public/info", status_code=status.HTTP_200_OK)
+def public_info():
+    return {"message": "Welcome stranger! This info is public."}
+
+
+# 2. GET /protected/profile
+@app.get("/protected/profile")
+def protected_profile(authorization: str | None = Header(default=None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access token required"
+        )
+    
+    token = authorization.split(" ")[1]
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access token required"
+        )
+
+    return {"message": "Access granted", "token": token}
 
 
 if __name__ == "__main__":
