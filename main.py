@@ -3,9 +3,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import uvicorn
-from fastapi import FastAPI, HTTPException, Header, status
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 
+# تحميل ملف .env
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
@@ -18,12 +20,48 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI()
+app = FastAPI(
+    title="Supabase FastAPI Auth API",
+    version="1.0.0",
+    description="Authentication and Authorization API with Supabase and FastAPI"
+)
+
+# إعداد خيار HTTPBearer لعرض زر القفل في Swagger UI (/docs)
+security = HTTPBearer()
 
 
 class UserAuthSchema(BaseModel):
     email: EmailStr
     password: str
+
+
+# --- Stage 4: Reusable Auth Dependency (Middleware Guard) ---
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access token required",
+        )
+
+    try:
+        user_response = supabase.auth.get_user(token)
+        user = user_response.user
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token",
+            )
+        
+        # إرجاع المستخدم والتوكن للاستخدام داخل الـ Routes
+        return {"user": user, "token": token}
+
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
 
 
 @app.get("/")
@@ -97,72 +135,43 @@ def login(credentials: UserAuthSchema):
         )
 
 
-# --- Stage 2 Routes ---
+# --- Stage 4: Logout Route ---
+@app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(current_user: dict = Depends(get_current_user)):
+    try:
+        supabase.auth.sign_out()
+        return None
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
 
-# 1. GET /public/info
+
+# --- Stage 2 & 3: Public & Protected Routes ---
 @app.get("/public/info", status_code=status.HTTP_200_OK)
 def public_info():
     return {"message": "Welcome stranger! This info is public."}
 
 
-# 2. GET /protected/profile
-@app.get("/protected/profile")
-def protected_profile(authorization: str | None = Header(default=None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access token required"
-        )
-    
-    token = authorization.split(" ")[1]
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access token required"
-        )
-
-    return {"message": "Access granted", "token": token}
-
-# --- Stage 3: GET /protected/profile ---
 @app.get("/protected/profile", status_code=status.HTTP_200_OK)
-def protected_profile(authorization: str | None = Header(default=None)):
-    # 1. Check if header is present and properly formatted
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access token required"
-        )
-    
-    token = authorization.split(" ")[1]
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access token required"
-        )
+def protected_profile(current_user: dict = Depends(get_current_user)):
+    user = current_user["user"]
+    return {
+        "id": user.id,
+        "email": user.email,
+        "created_at": user.created_at
+    }
 
-    # 2. Verify token using Supabase SDK
-    try:
-        user_response = supabase.auth.get_user(token)
-        user = user_response.user
 
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired token"
-            )
-
-        # 3. Return secure user metadata
-        return {
-            "id": user.id,
-            "email": user.email,
-            "created_at": user.created_at
-        }
-
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token"
-        )
+# Stage 4 Checkpoint Route: Dashboard
+@app.get("/protected/dashboard", status_code=status.HTTP_200_OK)
+def protected_dashboard(current_user: dict = Depends(get_current_user)):
+    user = current_user["user"]
+    return {
+        "message": f"Welcome to your dashboard, {user.email}!",
+        "status": "active"
+    }
 
 
 if __name__ == "__main__":
